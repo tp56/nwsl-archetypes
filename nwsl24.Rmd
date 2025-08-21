@@ -1,0 +1,381 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+# gets utility functions
+source('utility_functions.R')
+#import data from bundles
+bundle <- readRDS("filtered_data_bundle_updated.rds")
+filtered_data_24 <- bundle$data
+rate_variables_24 <- bundle$rate_vars
+
+bundle23 <- readRDS('filtered_data_bundle_23.rds')
+rate_variables_23 <- bundle23$rate_vars
+```
+```{r}
+#PCA plots
+filtered_data_23 <- filtered_data_23 |>
+  filter(season == 2023 & player_id != '' & games_played > 10 & team_club_name != '' & player_position != 'Goalkeeper')
+
+data_both_seasons <- bind_rows(filtered_data_23, filtered_data_24)
+
+# elbow plot --------------------------------------------------------------
+elbow_both <- prcomp(dplyr::select(data_both_seasons, all_of(rate_variables_24)),
+                   center = TRUE, scale. = TRUE)
+fviz_eig(elbow_both, addlabels = TRUE) + 
+  geom_hline(yintercept = 100 * (1 / ncol(elbow_both$x)), linetype = "dashed", color = "darkred")
+
+# actual graphs -----------------------------------------------------------
+#2024
+by_position_general_pca_24 <- plot_pca(filtered_data_24, rate_variables_24,
+                                    "player_position") + 
+  geom_text_repel(aes(label = player_match_name), size = 3, max.overlaps = 10)
+by_variable_team_pca_24 <- plot_pca(filtered_data_24, rate_variables_24,
+                                    "player_position") + scale_shape_manual(values = 0:13) + facet_wrap(~team_abbreviation)
+by_cluster_team_pca_24 <- plot_pca(filtered_data_24, rate_variables_24,
+                                   "cluster") + facet_wrap(~team_abbreviation)
+by_position_general_pca_24
+by_variable_team_pca_24
+# by_cluster_team_pca_24
+
+#2023
+by_position_general_pca_23 <- plot_pca(filtered_data_23, rate_variables_23,
+                                       "player_position") +
+  geom_text_repel(aes(label = player_match_name), size = 3, max.overlaps = 10)
+by_position_team_pca_23 <- plot_pca(filtered_data_23, rate_variables_23,
+                                       "player_position")
+by_position_general_pca_23 
+by_position_team_pca_23 + facet_wrap(~team_abbreviation)
+
+
+```
+```{r}
+# dendrograms
+
+plot_dendrogram_position_leaves_cluster_branches <- function(data_matrix, metadata, dist_method = "euclidean", linkage = "complete", k_clusters = 7) {
+  # Load required package
+  if (!requireNamespace("dendextend", quietly = TRUE)) {
+    install.packages("dendextend")
+  }
+  library(dendextend)
+  
+  # Step 1: Compute distance and clustering
+  dist_matrix <- dist(data_matrix, method = dist_method)
+  hc <- hclust(dist_matrix, method = linkage)
+  dend <- as.dendrogram(hc)
+  
+  # Step 2: Match labels to player names
+  labels(dend) <- metadata$player_match_name[match(labels(dend), rownames(data_matrix))]
+  
+  # Step 3: Cut tree into clusters
+  clusters <- cutree(hc, k = k_clusters)
+  metadata$cluster <- factor(clusters)
+  
+  # Step 4: Define position colors
+  position_colors <- c(
+    "Attacker" = "red",
+    "Midfielder" = "blue",
+    "Defender" = "green"
+  )
+  
+  # Step 5: Color branches by cluster
+  dend <- color_branches(dend, k = k_clusters)
+  
+  # Step 6: Color leaf nodes by position
+  colLab <- function(n) {
+    if (is.leaf(n)) {
+      a <- attributes(n)
+      label <- a$label
+      i <- which(metadata$player_match_name == label)
+      
+      if (length(i) == 0) {
+        color <- "gray"
+      } else {
+        pos <- metadata$player_position[i][1]  # Safely take first match
+        color <- position_colors[[pos]]
+        if (is.null(color)) color <- "gray"
+      }
+      
+      attr(n, "nodePar") <- c(
+        a$nodePar,
+        list(
+          lab.col = NA,     # No label color
+          col = color,      # point color by position
+          pch = 20,
+          lab.cex = 0,      # Hide label text
+          cex = 0.5
+        )
+      )
+    }
+    return(n)
+  }
+  
+  # Step 7: Apply leaf coloring
+  dend <- dendrapply(dend, colLab)
+  
+  # Step 8: Plot without labels
+  plot(dend,
+       ylab = "Pairwise Distance", 
+       xlab = "Players", leaflab = "none")
+  
+  # Step 9: Legends
+  legend("topright", legend = paste("Cluster", 1:k_clusters),
+         col = rainbow(k_clusters), lwd = 2, cex = 0.9, bty = "n",
+         inset = c(0, -0.03))
+  
+  legend("topleft", legend = names(position_colors),
+         col = position_colors, pch = 20, pt.cex = 1.5, cex = 0.9, bty = "n",
+         inset = c(0.3, 0))
+}
+
+
+plot_dendrogram_position_leaves_cluster_branches(nwsl_quant_24, filtered_data_24, k_clusters = 7)
+plot_dendrogram_position_leaves_cluster_branches(nwsl_quant_23, filtered_data_23, k_clusters = 7)
+```
+```{r}
+
+# chi-squared-test --------------------------------------------------------
+
+cluster_team_frequency_table <- function(df){
+  df |>
+    count(team_abbreviation, cluster) |>
+    pivot_wider(names_from = cluster, values_from = n, values_fill = 0)
+}
+
+frequency_table_24 <- cluster_team_frequency_table(players_in_each_cluster)
+frequency_table_23 <- cluster_team_frequency_table(cluster_team_summary_23)
+chi_squared_test <- function(freq_table){
+  chisq_matrix <- as.matrix(freq_table[,-1])
+  chisq.test(chisq_matrix)
+}
+
+print(chi_squared_test(frequency_table_24))
+
+print(chi_squared_test(frequency_table_23))
+```
+```{r}
+# cluster summary  ---------------------------------------------------------------
+important_variables <- c('player_match_name', 'cluster', 'player_position', 'team_abbreviation')
+
+get_players_in_each_cluster <- function(df, variables_of_intrests_list, focus_variable){
+ df |>
+    select(all_of(variables_of_intrests_list)) |>
+    arrange({{focus_variable}}) 
+}
+
+get_cluster_summary <- function(df, variables_of_intrests_list, focus_variable){
+  players_in_each_cluster <- get_players_in_each_cluster(df, variables_of_intrests_list, focus_variable)
+  cluster_summary <- players_in_each_cluster |>
+    group_by(cluster) |>
+    summarize(
+      total_players_in_cluster = n(),
+      attackers = sum(player_position == 'Attacker'),
+      midfielders = sum(player_position == "Midfielder"),
+      defenders = sum(player_position == 'Defender'),
+      attacker_rate = attackers / total_players_in_cluster,
+      midfielder_rate = midfielders / total_players_in_cluster,
+      defender_rate = defenders / total_players_in_cluster
+    )
+  cluster_summary <- as.data.frame(cluster_summary)
+  
+  return(cluster_summary)
+}
+
+get_team_cluster_summary <- function(df, variables_of_intrests_list, focus_variable) {
+  team_cluster_breakdown <- df |>
+    group_by(cluster, team_abbreviation) |>
+    summarize(
+      players_in_team_cluster = n(),
+      .groups = "drop") 
+
+  return(as.data.frame(team_cluster_breakdown))
+}
+
+# call functions here -----------------------------------------------------
+cluster_summary_24 <- get_cluster_summary(filtered_data_24, important_variables, 'cluster')
+cluster_centriods_24 <- get_cluster_centriods(filtered_data_24, rate_variables, cluster)
+cluster_summary_23 <- get_cluster_summary(filtered_data_23, important_variables, 'cluster')
+cluster_centriods_23 <- get_cluster_centriods(filtered_data_23, rate_variables, cluster)
+cluster_team_summary_23 <- get_team_cluster_summary(filtered_data_23, rate_variables, 'cluster')
+
+# cluster centriods -------------------------------------------------------
+
+get_cluster_centriods <- function(df, interest_variables, focus_variable){
+  cluster_overview <- df |>
+    group_by({{focus_variable}}) |>
+    summarise(across(all_of(interest_variables), list(mean = mean, sd = sd), .names = "{.col}_{.fn}")) 
+  cluster_centriods <- df |>
+    group_by({{focus_variable}}) |>
+    summarize(across(all_of(interest_variables), mean))
+}
+```
+```{r}
+
+# imports -----------------------------------------------------------------
+source('utility_functions.R')
+bundle <- readRDS("filtered_data_bundle.rds")
+rate_variables <- bundle$rate_vars
+
+selected_variables <- c(
+  "rate_touches",
+  "rate_successful_passes_total",
+  "rate_short_passes_successful",
+  "rate_loss_of_possession_total",
+  "rate_duels_ground",
+  "rate_passes_forward",
+  "rate_duels_lost",
+  "rate_duels_ground_lost",
+  "rate_short_passes_unsuccessful",
+  "rate_passes_unsuccessful"
+)
+
+# standardization ---------------------------------------------------------
+get_mean_stdev <- function(df, variables) {
+  results <- list()
+  
+  for (var in variables) {
+    x <- df[[var]]
+    mean_x <- mean(x)
+    stdev_x <- sd(x)
+    
+    results[[var]] <- list(mean = mean_x, stdev = stdev_x)
+  }
+  return(results)
+}
+
+standard_vars_24 <- get_mean_stdev(filtered_data_24, rate_variables)
+
+# compare to centriod -----------------------------------------------------
+standardize_centriods <- function(centriods_df, standardized_variables, variables){
+  results <- (centriods_df)
+  for (var in variables){
+    mean <- standardized_variables[[var]]$mean
+    stdev <- standardized_variables[[var]]$stdev
+    x <- centriods_df[[var]]
+    results[[var]] <- (x - mean) /stdev
+  }
+  return(results)
+}
+
+std_centriods_24 <- standardize_centriods(cluster_centriods_24, standard_vars_24, rate_variables)
+std_centriods_24$cluster <- as.factor(std_centriods_24$cluster)
+
+std_centriods_23 <- standardize_centriods(cluster_centriods_23, standard_vars_24, rate_variables)
+std_centriods_23$cluster <- as.factor(std_centriods_23$cluster)
+
+# get most frequent position group ----------------------------------------
+get_most_freq_position <- function(summary_df, analysis_df){
+  summary_df<- summary_df |>
+    rowwise() |> 
+    mutate (
+      
+      primary_position_group = c("Attacker", "Defender", "Midfielder")[
+        which.max(c(attacker_rate, defender_rate, midfielder_rate))
+      ]
+    ) |> 
+    ungroup()
+  analysis_df <- analysis_df |>
+    left_join(
+      summary_df |> select(cluster, primary_position_group),
+      by = "cluster"
+    )
+}
+
+positional_std_centriods_24 <- get_most_freq_position(cluster_summary_24, std_centriods_24)
+positional_std_centriods_23 <- get_most_freq_position(cluster_summary_23, std_centriods_23)
+
+
+# plot paracoord by position ----------------------------------------------
+ggparcoord(positional_std_centriods_24, columns = all_of(selected_variables), 
+           groupColumn = 'primary_position_group',
+           order = match(selected_variables, names(positional_std_centriods_24))) + 
+  labs(color = "Primary\nPosition\nGroup") +  
+  theme(axis.text.x = element_text(angle = 70, hjust = 1),
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 9),    
+        legend.key.size = unit(0.5, "lines"))
+
+ggparcoord(positional_std_centriods_23, columns = all_of(selected_variables), 
+           groupColumn = 'primary_position_group',
+           order = match(selected_variables, names(positional_std_centriods_23))) + 
+  labs(color = "Primary\nPosition\nGroup") +  
+  theme(axis.text.x = element_text(angle = 70, hjust = 1),
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 9),    
+        legend.key.size = unit(0.5, "lines")) 
+```
+```{r}
+data_24 <- filtered_data_24 
+data_23 <- filtered_data_23
+
+common_vars <- intersect(names(data_23), names(data_24))
+
+data_23 <- data_23[, common_vars]
+data_24 <- data_24[, common_vars]
+
+
+combine_data_get_rand <- function(prev_season, current_season, join_variable){
+  common_names <- intersect(prev_season[[join_variable]], current_season[[join_variable]])
+  print(length(common_names))
+  df1 <- prev_season |> 
+    filter(!!sym(join_variable) %in% common_names) |> 
+    arrange(!!sym(join_variable)) |>
+    distinct(player_match_name, .keep_all = TRUE)
+  df2 <- current_season |> 
+    filter(!!sym(join_variable) %in% common_names) |> 
+    arrange(!!sym(join_variable)) |>
+    distinct(player_match_name, .keep_all = TRUE)
+  
+  # 
+  # print(nrow(df1))
+  # print(nrow(df2))
+  # print(identical(df1[[join_variable]], df2[[join_variable]]))
+  # print(which(df1[[join_variable]] != df2[[join_variable]]))
+  x <- table(df1$cluster, df2$cluster)
+  rand_num <- rand_index(df1, df2, join_variable)
+  
+  return(rand_num)
+}
+
+
+rand_index <- function(df1, df2, join_variable){
+  merged <- inner_join(
+    df1[, c(join_variable, "cluster")],
+    df2[, c(join_variable, "cluster")],
+    by = join_variable,
+    suffix = c("_1", "_2")
+  )
+  clusters1 <- merged$cluster_1
+  clusters2 <- merged$cluster_2
+  
+  if (length(clusters1) != length(clusters2)) {
+    stop("Cluster vectors are not the same length after join.")
+  }
+  
+  print(head(merged))
+  
+  print(any(is.na(merged$cluster_1)))
+  print(any(is.na(merged$cluster_2)))
+  
+  ari <- adjustedRandIndex(clusters1, clusters2)
+  return(ari)
+  
+}
+
+rand_23_24 <- combine_data_get_rand(data_23, data_24, "player_match_name")
+
+rand_23_24
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
