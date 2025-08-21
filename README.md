@@ -2,5 +2,5 @@ Public release of code for Carnegie Mellon Sports Analytics conference submissio
 
 To use:
 
-1) import cleaned data files as rds files, then put as header in Rmarkdown document
+1) import cleaned data files as rds files (already done for 2023 and 2024), then put as header in Rmarkdown document
 2) run nwsl24 Rmarkdown document
