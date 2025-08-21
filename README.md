@@ -3,4 +3,4 @@ Public release of code for Carnegie Mellon Sports Analytics conference submissio
 To use:
 
 1) import cleaned data files as rds files, then put as header in Rmarkdown document
-2) run Rmarkdown document
+2) run nwsl24 Rmarkdown document
